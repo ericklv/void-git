@@ -7,3 +7,4 @@ mise.toml
 .gitignore
 *.vsix
 **/*.map
+.github/**

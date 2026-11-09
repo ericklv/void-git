@@ -1,0 +1,55 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - run: npm ci
+
+      - name: Check tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+
+      - name: Package
+        id: package
+        run: |
+          file="void-git-$(node -p "require('./package.json').version").vsix"
+          npx vsce package -o "$file"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != '' && startsWith(github.ref, 'refs/tags/v')
+        run: npx ovsx publish "${{ steps.package.outputs.file }}" -p "$OVSX_PAT"
+
+      - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.file }}
+          generate_release_notes: true
+
+      - name: Upload artifact
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.file }}
+          path: ${{ steps.package.outputs.file }}
