@@ -6,7 +6,6 @@
 - Multi-select user filter: show commits from selected authors (matched by email), with commit counts
 - Searchable filter pickers with clear action; filters reset when switching repositories
 - Stale refs are dropped from the branch filter automatically
-- Renamed to Void Git (`elazon.void-git`); commands and settings use the `voidGit.*` prefix
 
 ## 0.1.0
 
