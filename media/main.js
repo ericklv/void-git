@@ -8,7 +8,7 @@
   const ACTIONS = ['pick', 'reword', 'edit', 'squash', 'fixup', 'drop'];
 
   /** @type {any} */
-  let data = { commits: [], refs: [], head: null, branch: null, state: null, hasMore: false, filterRef: null, repo: '' };
+  let data = { commits: [], refs: [], head: null, branch: null, state: null, hasMore: false, filterRefs: [], filterAuthors: [], repo: '' };
   /** @type {Map<string, number>} */
   let indexByHash = new Map();
   let graph = { width: 0, svg: '' };
@@ -21,6 +21,10 @@
   /** @type {number[]} */
   let visible = [];
   const closedGroups = new Set();
+  /** @type {{root: string, list: any[]} | null} */
+  let authorsCache = null;
+  /** @type {any} */
+  let picker = null;
 
   const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
   const esc = (/** @type {any} */ s) =>
@@ -47,6 +51,11 @@
         break;
       case 'rewordPrompt':
         openRewordDialog(m);
+        break;
+      case 'authors':
+        authorsCache = { root: m.root, list: m.authors };
+        renderToolbar();
+        if (picker && picker.kind === 'user') openUserPicker();
         break;
       case 'busy':
         document.body.classList.toggle('busy', m.value);
@@ -144,15 +153,107 @@
         .join('');
       repoSel.title = data.root;
     }
-    const sel = /** @type {HTMLSelectElement} */ ($('branchFilter'));
-    const opt = (/** @type {string} */ v, /** @type {string} */ l) => `<option value="${esc(v)}" ${v === (data.filterRef || '') ? 'selected' : ''}>${esc(l)}</option>`;
-    const heads = data.refs.filter((/** @type {any} */ r) => r.type === 'head');
-    const remotes = data.refs.filter((/** @type {any} */ r) => r.type === 'remote');
-    sel.innerHTML =
-      opt('', 'All branches') +
-      (data.head ? opt('HEAD', 'HEAD') : '') +
-      heads.map((/** @type {any} */ r) => opt(r.full, r.name)).join('') +
-      remotes.map((/** @type {any} */ r) => opt(r.full, r.name)).join('');
+    const label = (/** @type {string} */ title, /** @type {string[]} */ names) =>
+      `${title}: ${names.length === 0 ? 'All' : names.length === 1 ? names[0] : names[0] + ' +' + (names.length - 1)} ▾`;
+    const refName = (/** @type {string} */ full) => data.refs.find((/** @type {any} */ r) => r.full === full)?.name ?? full;
+    const authorName = (/** @type {string} */ email) => authorsCache?.list.find((a) => a.email === email)?.name ?? email;
+    $('branchBtn').textContent = label('Branch', data.filterRefs.map(refName));
+    $('branchBtn').classList.toggle('active', data.filterRefs.length > 0);
+    $('userBtn').textContent = label('User', data.filterAuthors.map(authorName));
+    $('userBtn').classList.toggle('active', data.filterAuthors.length > 0);
+  }
+
+  // ---------- multi-select filter pickers ----------
+
+  /** @param {{kind: string, anchor: HTMLElement, items: {value: string, label: string, group: string, hint?: string}[] | null, selected: string[], apply: (v: string[]) => void}} p */
+  function openPicker(p) {
+    const keepQuery = picker && picker.kind === p.kind ? picker.query : '';
+    picker = { ...p, query: keepQuery, selected: new Set(p.selected) };
+    const el = $('picker');
+    el.className = '';
+    el.innerHTML = `<input id="pickerSearch" type="search" placeholder="Search" value="${esc(picker.query)}">
+      <div class="picker-actions"><a class="link" id="pickerClear">Clear</a></div>
+      <div id="pickerList"></div>`;
+    const r = p.anchor.getBoundingClientRect();
+    el.style.left = Math.min(r.left, window.innerWidth - 300) + 'px';
+    el.style.top = r.bottom + 2 + 'px';
+    renderPickerList();
+    const search = /** @type {HTMLInputElement} */ ($('pickerSearch'));
+    search.focus();
+    search.oninput = () => {
+      picker.query = search.value;
+      renderPickerList();
+    };
+    $('pickerClear').onclick = () => {
+      picker.selected.clear();
+      renderPickerList();
+      schedulePickerApply();
+    };
+  }
+
+  function renderPickerList() {
+    const list = $('pickerList');
+    if (!picker.items) {
+      list.innerHTML = '<div class="empty">Loading…</div>';
+      return;
+    }
+    const q = picker.query.trim().toLowerCase();
+    const items = picker.items.filter((/** @type {any} */ it) => !q || it.label.toLowerCase().includes(q) || (it.hint || '').toLowerCase().includes(q));
+    let group = '';
+    list.innerHTML =
+      items
+        .map((/** @type {any} */ it) => {
+          const head = it.group !== group ? `<div class="picker-group">${esc((group = it.group))}</div>` : '';
+          return `${head}<label class="picker-item" title="${esc(it.hint || it.label)}"><input type="checkbox" value="${esc(it.value)}" ${picker.selected.has(it.value) ? 'checked' : ''}><span>${esc(it.label)}</span>${it.hint ? `<span class="hint">${esc(it.hint)}</span>` : ''}</label>`;
+        })
+        .join('') || '<div class="empty">No matches</div>';
+    list.querySelectorAll('input[type=checkbox]').forEach((cb) =>
+      cb.addEventListener('change', () => {
+        const c = /** @type {HTMLInputElement} */ (cb);
+        if (c.checked) picker.selected.add(c.value);
+        else picker.selected.delete(c.value);
+        schedulePickerApply();
+      }),
+    );
+  }
+
+  let pickerTimer = 0;
+  function schedulePickerApply() {
+    clearTimeout(pickerTimer);
+    const p = picker;
+    pickerTimer = setTimeout(() => p.apply([...p.selected]), 350);
+  }
+
+  function closePicker() {
+    picker = null;
+    $('picker').className = 'hidden';
+  }
+
+  function openBranchPicker() {
+    const groupOf = { head: 'Local', remote: 'Remote', tag: 'Tags' };
+    const items = [
+      ...(data.head ? [{ value: 'HEAD', label: 'HEAD', group: 'Current' }] : []),
+      ...data.refs.map((/** @type {any} */ r) => ({ value: r.full, label: r.name, group: /** @type {any} */ (groupOf)[r.type] })),
+    ];
+    openPicker({
+      kind: 'branch',
+      anchor: $('branchBtn'),
+      items,
+      selected: data.filterRefs,
+      apply: (refs) => post({ type: 'setFilter', refs, authors: data.filterAuthors }),
+    });
+  }
+
+  function openUserPicker() {
+    const ready = authorsCache && authorsCache.root === data.root;
+    if (!ready) post({ type: 'authors' });
+    openPicker({
+      kind: 'user',
+      anchor: $('userBtn'),
+      items: ready ? /** @type {any} */ (authorsCache).list.map((/** @type {any} */ a) => ({ value: a.email, label: a.name, hint: `${a.email} · ${a.count}`, group: 'Authors' })) : null,
+      selected: picker && picker.kind === 'user' ? [...picker.selected] : data.filterAuthors,
+      apply: (authors) => post({ type: 'setFilter', refs: data.filterRefs, authors }),
+    });
   }
 
   function trackLabel(/** @type {string|undefined} */ t) {
@@ -259,7 +360,7 @@
       if (!f || matches(c, f)) visible.push(i);
     });
     const svg = $('graph');
-    if (f) {
+    if (f || data.filterAuthors.length) {
       svg.style.display = 'none';
       $('rows').style.setProperty('--gw', '8px');
     } else {
@@ -689,7 +790,8 @@
 
   $('repoSelect').addEventListener('change', (e) => post({ type: 'selectRepo', root: /** @type {HTMLSelectElement} */ (e.target).value }));
 
-  $('branchFilter').addEventListener('change', (e) => post({ type: 'setFilter', ref: /** @type {HTMLSelectElement} */ (e.target).value }));
+  $('branchBtn').addEventListener('click', () => (picker && picker.kind === 'branch' ? closePicker() : openBranchPicker()));
+  $('userBtn').addEventListener('click', () => (picker && picker.kind === 'user' ? closePicker() : openUserPicker()));
 
   let searchTimer = 0;
   $('search').addEventListener('input', (e) => {
@@ -706,11 +808,14 @@
   });
 
   document.addEventListener('mousedown', (e) => {
-    if (!(/** @type {HTMLElement} */ (e.target).closest('#menu'))) hideMenu();
+    const t = /** @type {HTMLElement} */ (e.target);
+    if (!t.closest('#menu')) hideMenu();
+    if (picker && !t.closest('#picker, #branchBtn, #userBtn')) closePicker();
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       hideMenu();
+      closePicker();
       closeModal();
     }
   });

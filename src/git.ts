@@ -116,12 +116,13 @@ export class Git {
     return runGit(this.root, args, opts);
   }
 
-  async log(max: number, ref: string | null): Promise<Commit[]> {
+  async log(max: number, refs: string[] = [], authorEmails: string[] = []): Promise<Commit[]> {
     const args = [
       '-c', 'log.showSignature=false', 'log', '--date-order', '--decorate=full', `-n${max}`,
       `--format=%H${FS}%P${FS}%an${FS}%ae${FS}%at${FS}%s${FS}%D${RS}`,
     ];
-    if (ref) args.push(ref);
+    if (authorEmails.length) args.push('-F', ...authorEmails.map((e) => `--author=<${e}>`));
+    if (refs.length) args.push(...refs);
     else args.push('--exclude=refs/stash', '--all');
     args.push('--');
     const out = await this.run(args);
@@ -133,6 +134,21 @@ export class Git {
         const [hash, parents, author, email, date, subject, deco] = rec.split(FS);
         return { hash, parents: parents ? parents.split(' ') : [], author, email, date: +date, subject, refs: parseDecorations(deco ?? '') };
       });
+  }
+
+  /** distinct authors across all refs, keyed by email, most active first */
+  async authors(): Promise<{ name: string; email: string; count: number }[]> {
+    const out = await this.run(['log', '--exclude=refs/stash', '--all', `--format=%an${FS}%ae`]);
+    const map = new Map<string, { name: string; email: string; count: number }>();
+    for (const line of out.split('\n')) {
+      if (!line) continue;
+      const [name, email] = line.split(FS);
+      const key = email.toLowerCase();
+      const a = map.get(key);
+      if (a) a.count++;
+      else map.set(key, { name, email, count: 1 });
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count);
   }
 
   async refs(): Promise<Ref[]> {

@@ -24,7 +24,8 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export class GraphController implements vscode.Disposable {
   private git?: Git;
   private maxCount = pageSize();
-  private filterRef: string | null = null;
+  private filterRefs: string[] = [];
+  private filterAuthors: string[] = [];
   private busy = false;
   private refreshTimer?: NodeJS.Timeout;
   private watcher?: vscode.Disposable;
@@ -64,7 +65,8 @@ export class GraphController implements vscode.Disposable {
     }
     this.git = new Git(root);
     this.maxCount = pageSize();
-    this.filterRef = null;
+    this.filterRefs = [];
+    this.filterAuthors = [];
     const gitDir = await this.git.gitDir();
     const w = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.Uri.file(gitDir), '{HEAD,ORIG_HEAD,FETCH_HEAD,packed-refs,refs/**,rebase-merge/**,rebase-apply/**,CHERRY_PICK_HEAD,REVERT_HEAD,MERGE_HEAD}'),
@@ -85,10 +87,12 @@ export class GraphController implements vscode.Disposable {
     const git = this.git;
     if (!git) return;
     try {
-      const [repoList, commits, refs, head, branch, state, worktrees] = await Promise.all([
+      const refs = await git.refs();
+      const known = new Set(['HEAD', ...refs.map((r) => r.full)]);
+      this.filterRefs = this.filterRefs.filter((r) => known.has(r));
+      const [repoList, commits, head, branch, state, worktrees] = await Promise.all([
         this.repos.list(),
-        git.log(this.maxCount, this.filterRef),
-        git.refs(),
+        git.log(this.maxCount, this.filterRefs, this.filterAuthors),
         git.head(),
         git.currentBranch(),
         git.state(),
@@ -101,7 +105,8 @@ export class GraphController implements vscode.Disposable {
         root: git.root,
         repos: repoList.map((r) => ({ root: r, name: path.basename(r) })),
         commits, refs, head, branch, state, worktrees,
-        filterRef: this.filterRef,
+        filterRefs: this.filterRefs,
+        filterAuthors: this.filterAuthors,
         hasMore: commits.length >= this.maxCount,
       });
     } catch (e) {
@@ -122,9 +127,12 @@ export class GraphController implements vscode.Disposable {
           this.maxCount += pageSize();
           return await this.refresh();
         case 'setFilter':
-          this.filterRef = m.ref || null;
+          this.filterRefs = m.refs ?? [];
+          this.filterAuthors = m.authors ?? [];
           this.maxCount = pageSize();
           return await this.refresh();
+        case 'authors':
+          return this.post({ type: 'authors', root: this.git?.root, authors: this.git ? await this.git.authors() : [] });
         case 'details':
           return this.post({ type: 'details', details: await this.git!.details(m.hash) });
         case 'openDiff':
@@ -442,7 +450,8 @@ export class GraphController implements vscode.Disposable {
 <body>
 <div id="toolbar">
   <span id="repo"></span><select id="repoSelect" class="hidden" title="Repository"></select>
-  <select id="branchFilter" title="Branch filter"></select>
+  <button id="branchBtn" class="filter-btn secondary" title="Filter by branch"></button>
+  <button id="userBtn" class="filter-btn secondary" title="Filter by author"></button>
   <input id="search" type="search" placeholder="Filter: message, author, hash">
   <span class="spacer"></span>
   <button data-cmd="fetch" title="git fetch --all --prune">Fetch</button>
@@ -462,6 +471,7 @@ export class GraphController implements vscode.Disposable {
   <div id="details" class="pane"></div>
 </div>
 <div id="menu" class="hidden"></div>
+<div id="picker" class="hidden"></div>
 <div id="modal" class="hidden"><div id="dialog"></div></div>
 <script nonce="${nonce}" src="${uri('main.js')}"></script>
 </body>
