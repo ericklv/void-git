@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Multi-select branch filter: show commits reachable from any combination of HEAD, local branches, remote branches and tags
+- Multi-select user filter: show commits from selected authors (matched by email), with commit counts
+- Searchable filter pickers with clear action; filters reset when switching repositories
+- Stale refs are dropped from the branch filter automatically
+- Renamed to Void Git (`elazon.void-git`); commands and settings use the `voidGit.*` prefix
+
 ## 0.1.0
 
 Initial release.

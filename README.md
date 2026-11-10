@@ -7,7 +7,8 @@ An IntelliJ-style git log for VS Code: a full commit graph with cherry-pick, com
 ## Features
 
 ### Commit graph
-- Full graph of all branches, or a single branch via the branch filter
+- Full graph of all branches
+- Multi-select branch filter (HEAD, local, remote, tags) and user filter by author
 - Branch and tag labels next to each commit message; the current branch is highlighted
 - Text filter by message, author, hash or ref name
 - Commit details: full message, author, committer, parents and changed files

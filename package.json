@@ -2,7 +2,7 @@
   "name": "void-git",
   "displayName": "Void Git",
   "description": "IntelliJ-style git log: full commit graph, cherry-pick, reword, interactive rebase, worktrees.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "elazon",
   "license": "MIT",
   "repository": {
